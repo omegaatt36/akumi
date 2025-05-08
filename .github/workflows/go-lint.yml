@@ -1,0 +1,80 @@
+name: Go Lint and Format
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_reinstall:
+        description: "Force reinstall all tools"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  lint-and-format:
+    name: Check linting and formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+
+      - name: Cache Go tools
+        if: ${{ !github.event.inputs.force_reinstall }}
+        uses: actions/cache@v3
+        with:
+          path: ~/go/bin
+          key: ${{ runner.os }}-go-tools-akumi
+          restore-keys: |
+            ${{ runner.os }}-go-tools-akumi
+
+      - name: Install dependencies (conditional)
+        if: ${{ !github.event.inputs.force_reinstall }}
+        run: |
+          [ -f ~/go/bin/goimports ] || go install golang.org/x/tools/cmd/goimports@latest
+          [ -f ~/go/bin/gci ] || go install github.com/daixiang0/gci@latest
+          [ -f ~/go/bin/misspell ] || go install github.com/client9/misspell/cmd/misspell@latest
+          [ -f ~/go/bin/staticcheck ] || go install honnef.co/go/tools/cmd/staticcheck@latest
+          [ -f ~/go/bin/golangci-lint ] || go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+      - name: Install dependencies (force reinstall)
+        if: ${{ github.event.inputs.force_reinstall }}
+        run: |
+          go install golang.org/x/tools/cmd/goimports@latest
+          go install github.com/daixiang0/gci@latest
+          go install github.com/client9/misspell/cmd/misspell@latest
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+      - name: Check formatting
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            gofmt -s -d .
+            exit 1
+          fi
+          if [ "$(goimports -l -local github.com/omegaatt36/akumi $(find . -type f -name '*.go') | wc -l)" -gt 0 ]; then
+            goimports -d -local github.com/omegaatt36/akumi $(find . -type f -name '*.go')
+            exit 1
+          fi
+          gci write -s standard -s default -s "Prefix(github.com/omegaatt36/akumi)" --skip-generated .
+          go mod tidy -v
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Go mod tidy needed"
+            git status
+            git diff
+            exit 1
+          fi
+
+      - name: Run linters
+        run: |
+          go vet -all ./...
+          golangci-lint run
+          misspell -error */**
+          staticcheck $(go list ./...)

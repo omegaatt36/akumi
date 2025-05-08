@@ -2,6 +2,7 @@ package styles
 
 import (
 	"github.com/charmbracelet/lipgloss"
+
 	"github.com/omegaatt36/akumi/config"
 )
 

@@ -50,12 +50,12 @@ type ThemeColors struct {
 	SecondaryColor string `yaml:"secondary_color,omitempty"`
 	HighlightColor string `yaml:"highlight_color,omitempty"`
 	TextColor      string `yaml:"text_color,omitempty"`
-	
+
 	// Status colors
-	ErrorColor     string `yaml:"error_color,omitempty"`
-	SuccessColor   string `yaml:"success_color,omitempty"`
-	WarningColor   string `yaml:"warning_color,omitempty"`
-	InfoColor      string `yaml:"info_color,omitempty"`
+	ErrorColor   string `yaml:"error_color,omitempty"`
+	SuccessColor string `yaml:"success_color,omitempty"`
+	WarningColor string `yaml:"warning_color,omitempty"`
+	InfoColor    string `yaml:"info_color,omitempty"`
 }
 
 // DefaultTheme returns the application's default color theme.
@@ -113,13 +113,39 @@ func LoadConfig() (Config, error) {
 		return Config{}, err
 	}
 
+	// Ensure config directory exists
+	if err := ensureConfigDirExists(configPath); err != nil {
+		return Config{}, err
+	}
+
+	// Read configuration file
+	cfg, err := readConfigFile(configPath)
+	if err != nil {
+		return Config{}, err
+	}
+
+	// Apply default port to targets
+	applyDefaultPorts(&cfg)
+
+	// Apply default theme values
+	applyDefaultTheme(&cfg)
+
+	return cfg, nil
+}
+
+// ensureConfigDirExists ensures the configuration directory exists
+func ensureConfigDirExists(configPath string) error {
 	configDirPath := filepath.Dir(configPath)
 	if _, err := os.Stat(configDirPath); os.IsNotExist(err) {
 		if err := os.MkdirAll(configDirPath, 0750); err != nil {
-			return Config{}, fmt.Errorf("failed to create config directory %s: %w", configDirPath, err)
+			return fmt.Errorf("failed to create config directory %s: %w", configDirPath, err)
 		}
 	}
+	return nil
+}
 
+// readConfigFile reads and parses the configuration file
+func readConfigFile(configPath string) (Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -138,16 +164,22 @@ func LoadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
 
-	// Apply defaults
+	return cfg, nil
+}
+
+// applyDefaultPorts sets the default port (22) for targets where port is not specified
+func applyDefaultPorts(cfg *Config) {
 	for i := range cfg.Targets {
 		if cfg.Targets[i].Port == 0 {
 			cfg.Targets[i].Port = 22
 		}
 	}
-	
-	// Apply default theme colors for any unset values
+}
+
+// applyDefaultTheme applies default theme colors for any unset values
+func applyDefaultTheme(cfg *Config) {
 	defaultTheme := DefaultTheme()
-	
+
 	if cfg.Theme.PrimaryColor == "" {
 		cfg.Theme.PrimaryColor = defaultTheme.PrimaryColor
 	}
@@ -172,8 +204,6 @@ func LoadConfig() (Config, error) {
 	if cfg.Theme.InfoColor == "" {
 		cfg.Theme.InfoColor = defaultTheme.InfoColor
 	}
-
-	return cfg, nil
 }
 
 // SaveConfig writes the configuration to disk.

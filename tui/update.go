@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/omegaatt36/akumi/config"
 )
 
@@ -210,49 +211,76 @@ func (m Model) updateListTargetsState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case key.Matches(msg, m.Keys.Up):
-		if len(m.Targets) > 0 {
-			m.Cursor--
-			if m.Cursor < 0 {
-				m.Cursor = len(m.Targets) - 1
-			}
-		}
+		m = m.handleCursorUp()
 
 	case key.Matches(msg, m.Keys.Down):
-		if len(m.Targets) > 0 {
-			m.Cursor++
-			if m.Cursor >= len(m.Targets) {
-				m.Cursor = 0
-			}
-		}
+		m = m.handleCursorDown()
 
 	case key.Matches(msg, m.Keys.Enter):
-		if len(m.Targets) > 0 && m.Cursor >= 0 && m.Cursor < len(m.Targets) {
+		if m.canInteractWithTarget() {
 			return m.executeSSHCommand()
 		}
 
 	case key.Matches(msg, m.Keys.Create):
-		m.State = StateCreateTarget
-		m.resetCreateInputs()
-		inputModeActive = true
-		return m, m.CreateInputs[m.CreateFocus].Focus()
+		return m.handleCreateTarget()
 
 	case key.Matches(msg, m.Keys.Edit):
-		if len(m.Targets) > 0 && m.Cursor >= 0 && m.Cursor < len(m.Targets) {
-			m.EditIndex = m.Cursor
-			m.populateEditInputs()
-			m.State = StateEditTarget
-			inputModeActive = true
-			return m, m.CreateInputs[m.CreateFocus].Focus()
+		if m.canInteractWithTarget() {
+			return m.handleEditTarget()
 		}
 
 	case key.Matches(msg, m.Keys.Delete):
-		if len(m.Targets) > 0 && m.Cursor >= 0 && m.Cursor < len(m.Targets) {
+		if m.canInteractWithTarget() {
 			m.State = StateConfirmDelete
 			confirmationModeActive = true
 		}
 	}
 
 	return m, nil
+}
+
+// handleCursorUp moves the cursor up in the target list
+func (m Model) handleCursorUp() Model {
+	if len(m.Targets) > 0 {
+		m.Cursor--
+		if m.Cursor < 0 {
+			m.Cursor = len(m.Targets) - 1
+		}
+	}
+	return m
+}
+
+// handleCursorDown moves the cursor down in the target list
+func (m Model) handleCursorDown() Model {
+	if len(m.Targets) > 0 {
+		m.Cursor++
+		if m.Cursor >= len(m.Targets) {
+			m.Cursor = 0
+		}
+	}
+	return m
+}
+
+// canInteractWithTarget checks if the current cursor position is valid for target interaction
+func (m Model) canInteractWithTarget() bool {
+	return len(m.Targets) > 0 && m.Cursor >= 0 && m.Cursor < len(m.Targets)
+}
+
+// handleCreateTarget initializes the create target state
+func (m Model) handleCreateTarget() (tea.Model, tea.Cmd) {
+	m.State = StateCreateTarget
+	m.resetCreateInputs()
+	inputModeActive = true
+	return m, m.CreateInputs[m.CreateFocus].Focus()
+}
+
+// handleEditTarget initializes the edit target state
+func (m Model) handleEditTarget() (tea.Model, tea.Cmd) {
+	m.EditIndex = m.Cursor
+	m.populateEditInputs()
+	m.State = StateEditTarget
+	inputModeActive = true
+	return m, m.CreateInputs[m.CreateFocus].Focus()
 }
 
 // executeSSHCommand executes the SSH connection command

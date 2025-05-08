@@ -5,6 +5,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/omegaatt36/akumi/config"
 	"github.com/omegaatt36/akumi/tui/styles"
 )
@@ -179,7 +180,7 @@ func newTextInput() textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = ""
 	ti.PromptStyle = styles.InputLabel
-	ti.PlaceholderStyle = styles.InputField.Copy().Faint(true)
+	ti.PlaceholderStyle = styles.InputField.Faint(true)
 	ti.TextStyle = styles.InputField
 	return ti
 }
@@ -190,7 +191,7 @@ func InitialModel() Model {
 	if err != nil {
 		return Model{Err: err}
 	}
-	
+
 	// Initialize styles with theme from config
 	styles.Initialize(cfg.Theme)
 

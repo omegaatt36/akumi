@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
+
 	"github.com/omegaatt36/akumi/config"
 	"github.com/omegaatt36/akumi/tui/styles"
 )
@@ -71,11 +72,11 @@ func (m Model) renderStatusMessage() string {
 	case StatusError:
 		style = styles.ErrorText
 	case StatusSuccess:
-		style = styles.BaseStyle.Copy().Foreground(styles.SuccessColor)
+		style = styles.BaseStyle.Foreground(styles.SuccessColor)
 	case StatusWarning:
-		style = styles.BaseStyle.Copy().Foreground(styles.WarningColor)
+		style = styles.BaseStyle.Foreground(styles.WarningColor)
 	default:
-		style = styles.BaseStyle.Copy().Foreground(styles.InfoColor)
+		style = styles.BaseStyle.Foreground(styles.InfoColor)
 	}
 
 	return style.Render(m.StatusMessage)
@@ -116,10 +117,10 @@ func (m Model) renderEditTargetView() string {
 func (m Model) renderInputField(label string, input textinput.Model, isFocused bool) string {
 	// We'll keep the textinput model for its input handling
 	// But we'll manually render the display for consistent layout
-	
+
 	// Get the label part with fixed width for alignment
 	paddedLabel := fmt.Sprintf("%-12s", label+":")
-	
+
 	// Style the label based on focus
 	var styledLabel string
 	if isFocused {
@@ -127,13 +128,13 @@ func (m Model) renderInputField(label string, input textinput.Model, isFocused b
 	} else {
 		styledLabel = styles.InputLabel.Render(paddedLabel)
 	}
-	
+
 	// Get value to display (use placeholder if empty)
 	value := input.Value()
 	if value == "" {
 		value = input.Placeholder
 	}
-	
+
 	// Style the value based on focus
 	var styledValue string
 	if isFocused {
@@ -141,7 +142,7 @@ func (m Model) renderInputField(label string, input textinput.Model, isFocused b
 	} else {
 		styledValue = styles.InputField.Render(value)
 	}
-	
+
 	// Combine everything with proper spacing
 	return "  " + styledLabel + " " + styledValue + "\n"
 }
