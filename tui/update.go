@@ -3,14 +3,20 @@ package tui
 import (
 	"log"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/omegaatt36/akumi/config"
 )
 
-// parseTargetFromInputs parses the input fields into an SSHTarget struct.
+// Message types
+type SSHCommandFinishedMsg struct{}
+type StatusMessageTimeoutMsg struct{}
+
+// parseTargetFromInputs parses the input fields into an SSHTarget struct
 // Returns the target and a boolean indicating success.
 func (m *Model) parseTargetFromInputs() (config.SSHTarget, bool) {
 	user := strings.TrimSpace(m.CreateInputs[InputUser].Value())
@@ -21,7 +27,8 @@ func (m *Model) parseTargetFromInputs() (config.SSHTarget, bool) {
 
 	// Basic validation
 	if user == "" || host == "" {
-		// TODO: Maybe show an error message instead of just returning false?
+		m.StatusMessage = "Username and host cannot be empty"
+		m.StatusMessageType = StatusError
 		return config.SSHTarget{}, false
 	}
 
@@ -29,7 +36,8 @@ func (m *Model) parseTargetFromInputs() (config.SSHTarget, bool) {
 	if portStr != "" {
 		port, err = strconv.Atoi(portStr)
 		if err != nil || port <= 0 || port > 65535 {
-			// TODO: Handle invalid port error - maybe display in TUI?
+			m.StatusMessage = "Port must be a valid number between 1-65535"
+			m.StatusMessageType = StatusError
 			return config.SSHTarget{}, false
 		}
 	}
@@ -42,45 +50,65 @@ func (m *Model) parseTargetFromInputs() (config.SSHTarget, bool) {
 	}, true
 }
 
-// finalizeCreateTarget validates input, adds the target, saves config, and returns to list view.
+// finalizeCreateTarget validates input, adds the target, saves config, and returns to list view
 func (m *Model) finalizeCreateTarget() tea.Cmd {
 	newTarget, ok := m.parseTargetFromInputs()
 	if !ok {
-		m.State = StateListTargets
-		m.resetCreateInputs()
-		return nil
+		return hideStatusMessageAfterDelay
 	}
 
 	m.Targets = append(m.Targets, newTarget)
 	m.SaveError = config.SaveConfig(config.Config{Targets: m.Targets})
 
+	if m.SaveError != nil {
+		m.StatusMessage = "Error saving configuration"
+		m.StatusMessageType = StatusError
+		return hideStatusMessageAfterDelay
+	}
+
 	m.State = StateListTargets
 	m.resetCreateInputs()
 	m.Cursor = len(m.Targets) - 1
+	m.StatusMessage = "New connection created successfully"
+	m.StatusMessageType = StatusSuccess
 
-	return nil
+	return hideStatusMessageAfterDelay
 }
 
-// finalizeEditTarget validates input, updates the target, saves config, and returns to list view.
+// finalizeEditTarget validates input, updates the target, saves config, and returns to list view
 func (m *Model) finalizeEditTarget() tea.Cmd {
 	updatedTarget, ok := m.parseTargetFromInputs()
-	if !ok || m.EditIndex < 0 || m.EditIndex >= len(m.Targets) {
+	if !ok {
+		return hideStatusMessageAfterDelay
+	}
+
+	if m.EditIndex < 0 || m.EditIndex >= len(m.Targets) {
+		m.StatusMessage = "Edit operation failed: Target not found"
+		m.StatusMessageType = StatusError
 		m.State = StateListTargets
 		m.resetCreateInputs()
-		return nil
+		return hideStatusMessageAfterDelay
 	}
 
 	m.Targets[m.EditIndex] = updatedTarget
-	m.SaveError = config.SaveConfig(config.Config{Targets: m.Targets}) // Attempt to save
+	m.SaveError = config.SaveConfig(config.Config{Targets: m.Targets})
+
+	if m.SaveError != nil {
+		m.StatusMessage = "Error saving configuration"
+		m.StatusMessageType = StatusError
+		return hideStatusMessageAfterDelay
+	}
 
 	m.State = StateListTargets
 	m.Cursor = m.EditIndex
 	m.resetCreateInputs()
+	m.StatusMessage = "Connection updated successfully"
+	m.StatusMessageType = StatusSuccess
 
-	return nil
+	return hideStatusMessageAfterDelay
 }
 
-// resetCreateInputs clears input fields, resets focus, and resets the edit index.
+// resetCreateInputs clears input fields, resets focus, and resets the edit index
 func (m *Model) resetCreateInputs() {
 	for i := range m.CreateInputs {
 		m.CreateInputs[i].Reset()
@@ -91,7 +119,7 @@ func (m *Model) resetCreateInputs() {
 	m.EditIndex = -1
 }
 
-// populateEditInputs fills the input fields with data from the target being edited.
+// populateEditInputs fills the input fields with data from the target being edited
 func (m *Model) populateEditInputs() {
 	if m.EditIndex < 0 || m.EditIndex >= len(m.Targets) {
 		return
@@ -116,194 +144,239 @@ func (m *Model) populateEditInputs() {
 	}
 }
 
-// Update processes incoming messages and returns an updated model and command.
-// It handles all user interactions and state transitions in the TUI.
+// hideStatusMessageAfterDelay clears status message after a delay
+func hideStatusMessageAfterDelay() tea.Msg {
+	// In a real application you might want to use a timer for actual delay
+	return StatusMessageTimeoutMsg{}
+}
+
+// Update processes incoming messages and returns an updated model and command
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if cmd := m.handleError(msg); cmd != nil {
-		return m, cmd
-	}
-
-	if _, ok := msg.(tea.KeyMsg); ok && m.State != StateConfirmDelete {
-		m.SaveError = nil
-	}
-
-	var cmd tea.Cmd
-	var cmds []tea.Cmd
-
+	// Handle window resize and other common messages
 	switch msg := msg.(type) {
+	case StatusMessageTimeoutMsg:
+		m.StatusMessage = ""
+		return m, nil
+
+	case SSHCommandFinishedMsg:
+		m.StatusMessage = "SSH connection closed"
+		m.StatusMessageType = StatusInfo
+		return m, hideStatusMessageAfterDelay
+
 	case tea.WindowSizeMsg:
 		m.TerminalWidth = msg.Width
+		m.TerminalHeight = msg.Height
+		m.Help.Width = msg.Width
+		return m, nil
 
 	case tea.KeyMsg:
-		if cmd := m.handleGlobalKeys(msg); cmd != nil {
-			return m, cmd
+		// Check global keys
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			return m, tea.Quit
 		}
 
+		// Handle state-specific key presses
 		switch m.State {
 		case StateListTargets:
-			return m.handleListTargetsState(msg)
+			return m.updateListTargetsState(msg)
 		case StateCreateTarget:
-			return m.handleCreateTargetState(msg)
+			return m.updateCreateTargetState(msg)
 		case StateEditTarget:
-			return m.handleEditTargetState(msg)
+			return m.updateEditTargetState(msg)
 		case StateConfirmDelete:
-			return m.handleConfirmDeleteState(msg)
+			return m.updateConfirmDeleteState(msg)
 		}
 	}
 
-	// Handle input field updates for create/edit states
+	// Update input fields
 	if m.State == StateCreateTarget || m.State == StateEditTarget {
-		cmd = m.handleInputFieldUpdate(msg)
-		if cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	}
-
-	return m, tea.Batch(cmds...)
-}
-
-func (m Model) handleError(msg tea.Msg) tea.Cmd {
-	if m.Err != nil {
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			switch keyMsg.String() {
-			case "ctrl+c", "q":
-				return tea.Quit
+		var cmd tea.Cmd
+		for i := range m.CreateInputs {
+			if i == m.CreateFocus {
+				m.CreateInputs[i], cmd = m.CreateInputs[i].Update(msg)
+				return m, cmd
 			}
 		}
-		return nil
 	}
-	return nil
+
+	return m, nil
 }
 
-func (m Model) handleGlobalKeys(msg tea.KeyMsg) tea.Cmd {
-	switch msg.String() {
-	case "ctrl+c":
-		if m.State == StateConfirmDelete {
-			m.State = StateListTargets
-			return nil
-		}
-		return tea.Quit
-	}
-	return nil
-}
-
-func (m Model) handleListTargetsState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q":
+// updateListTargetsState handles keypresses in the list targets state
+func (m Model) updateListTargetsState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.Keys.Quit):
 		return m, tea.Quit
-	case "up", "k":
+
+	case key.Matches(msg, m.Keys.Up):
 		if len(m.Targets) > 0 {
 			m.Cursor--
 			if m.Cursor < 0 {
 				m.Cursor = len(m.Targets) - 1
 			}
 		}
-	case "down", "j":
+
+	case key.Matches(msg, m.Keys.Down):
 		if len(m.Targets) > 0 {
 			m.Cursor++
 			if m.Cursor >= len(m.Targets) {
 				m.Cursor = 0
 			}
 		}
-	case "enter":
+
+	case key.Matches(msg, m.Keys.Enter):
 		if len(m.Targets) > 0 && m.Cursor >= 0 && m.Cursor < len(m.Targets) {
 			return m.executeSSHCommand()
 		}
-	case "c":
+
+	case key.Matches(msg, m.Keys.Create):
 		m.State = StateCreateTarget
 		m.resetCreateInputs()
-	case "e":
+		inputModeActive = true
+		return m, m.CreateInputs[m.CreateFocus].Focus()
+
+	case key.Matches(msg, m.Keys.Edit):
 		if len(m.Targets) > 0 && m.Cursor >= 0 && m.Cursor < len(m.Targets) {
 			m.EditIndex = m.Cursor
 			m.populateEditInputs()
 			m.State = StateEditTarget
+			inputModeActive = true
 			return m, m.CreateInputs[m.CreateFocus].Focus()
 		}
-	case "d":
+
+	case key.Matches(msg, m.Keys.Delete):
 		if len(m.Targets) > 0 && m.Cursor >= 0 && m.Cursor < len(m.Targets) {
 			m.State = StateConfirmDelete
+			confirmationModeActive = true
 		}
 	}
+
 	return m, nil
 }
 
+// executeSSHCommand executes the SSH connection command
 func (m Model) executeSSHCommand() (tea.Model, tea.Cmd) {
+	if m.Cursor < 0 || m.Cursor >= len(m.Targets) {
+		m.StatusMessage = "Cannot connect: Selected target does not exist"
+		m.StatusMessageType = StatusError
+		return m, hideStatusMessageAfterDelay
+	}
+
 	selectedTarget := m.Targets[m.Cursor]
 	cmdArgs := selectedTarget.GetSSHCommand()
 	sshCmd := exec.Command("ssh", cmdArgs...)
-	return m, tea.ExecProcess(sshCmd, func(err error) tea.Msg {
-		if err != nil {
-			log.Printf("SSH command failed: %v", err)
-		}
-		return nil
-	})
+
+	m.StatusMessage = "Connecting to " + selectedTarget.String() + "..."
+	m.StatusMessageType = StatusInfo
+
+	return m, tea.Sequence(
+		tea.ExecProcess(sshCmd, func(err error) tea.Msg {
+			if err != nil {
+				log.Printf("SSH command execution failed: %v", err)
+				return SSHCommandFinishedMsg{}
+			}
+			return SSHCommandFinishedMsg{}
+		}),
+	)
 }
 
-func (m Model) handleCreateTargetState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
+// updateCreateTargetState handles keypresses in the create target state
+func (m Model) updateCreateTargetState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.Keys.Escape):
 		m.State = StateListTargets
 		m.resetCreateInputs()
+		inputModeActive = false
 		return m, nil
-	case "tab", "shift+tab", "enter", "up", "down":
-		return m.handleInputNavigation(msg, m.finalizeCreateTarget)
-	default:
-		return m.handleInputUpdate(msg)
-	}
-}
 
-func (m Model) handleEditTargetState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.State = StateListTargets
-		m.resetCreateInputs()
-		return m, nil
-	case "tab", "shift+tab", "enter", "up", "down":
-		return m.handleInputNavigation(msg, m.finalizeEditTarget)
-	default:
-		return m.handleInputUpdate(msg)
-	}
-}
+	case key.Matches(msg, m.Keys.Tab):
+		// Move to next input field
+		m.CreateInputs[m.CreateFocus].Blur()
+		m.CreateFocus = (m.CreateFocus + 1) % len(m.CreateInputs)
+		return m, m.CreateInputs[m.CreateFocus].Focus()
 
-func (m Model) handleInputNavigation(msg tea.KeyMsg, finalizeFunc func() tea.Cmd) (tea.Model, tea.Cmd) {
-	key := msg.String()
-	if key == "enter" && m.CreateFocus == NumInputs-1 {
-		return m, finalizeFunc()
-	}
-
-	m.CreateInputs[m.CreateFocus].Blur()
-
-	if key == "up" || key == "shift+tab" {
+	case key.Matches(msg, m.Keys.ShiftTab):
+		// Move to previous input field
+		m.CreateInputs[m.CreateFocus].Blur()
 		m.CreateFocus--
-	} else {
-		m.CreateFocus++
+		if m.CreateFocus < 0 {
+			m.CreateFocus = len(m.CreateInputs) - 1
+		}
+		return m, m.CreateInputs[m.CreateFocus].Focus()
+
+	case key.Matches(msg, m.Keys.Enter):
+		// If last field, finalize creation
+		if m.CreateFocus == len(m.CreateInputs)-1 {
+			return m, m.finalizeCreateTarget()
+		}
+		// Otherwise move to next field
+		m.CreateInputs[m.CreateFocus].Blur()
+		m.CreateFocus = (m.CreateFocus + 1) % len(m.CreateInputs)
+		return m, m.CreateInputs[m.CreateFocus].Focus()
 	}
 
-	if m.CreateFocus >= NumInputs {
-		m.CreateFocus = 0
-	} else if m.CreateFocus < 0 {
-		m.CreateFocus = NumInputs - 1
-	}
-
-	return m, m.CreateInputs[m.CreateFocus].Focus()
+	// Update current field input
+	cmd := m.updateCurrentInput(msg)
+	return m, cmd
 }
 
-func (m Model) handleInputUpdate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.CreateFocus >= 0 && m.CreateFocus < len(m.CreateInputs) {
-		var cmd tea.Cmd
-		m.CreateInputs[m.CreateFocus], cmd = m.CreateInputs[m.CreateFocus].Update(msg)
-		return m, cmd
+// updateEditTargetState handles keypresses in the edit target state
+func (m Model) updateEditTargetState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.Keys.Escape):
+		m.State = StateListTargets
+		m.resetCreateInputs()
+		inputModeActive = false
+		return m, nil
+
+	case key.Matches(msg, m.Keys.Tab):
+		// Move to next input field
+		m.CreateInputs[m.CreateFocus].Blur()
+		m.CreateFocus = (m.CreateFocus + 1) % len(m.CreateInputs)
+		return m, m.CreateInputs[m.CreateFocus].Focus()
+
+	case key.Matches(msg, m.Keys.ShiftTab):
+		// Move to previous input field
+		m.CreateInputs[m.CreateFocus].Blur()
+		m.CreateFocus--
+		if m.CreateFocus < 0 {
+			m.CreateFocus = len(m.CreateInputs) - 1
+		}
+		return m, m.CreateInputs[m.CreateFocus].Focus()
+
+	case key.Matches(msg, m.Keys.Enter):
+		// If last field, finalize edit
+		if m.CreateFocus == len(m.CreateInputs)-1 {
+			return m, m.finalizeEditTarget()
+		}
+		// Otherwise move to next field
+		m.CreateInputs[m.CreateFocus].Blur()
+		m.CreateFocus = (m.CreateFocus + 1) % len(m.CreateInputs)
+		return m, m.CreateInputs[m.CreateFocus].Focus()
 	}
-	return m, nil
+
+	// Update current field input
+	cmd := m.updateCurrentInput(msg)
+	return m, cmd
 }
 
-func (m Model) handleConfirmDeleteState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch strings.ToLower(msg.String()) {
-	case "y":
+// updateConfirmDeleteState handles keypresses in the confirm delete state
+func (m Model) updateConfirmDeleteState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.Keys.Confirm):
 		if m.Cursor >= 0 && m.Cursor < len(m.Targets) {
 			deleteIndex := m.Cursor
-			m.Targets = append(m.Targets[:deleteIndex], m.Targets[deleteIndex+1:]...)
+			m.Targets = slices.Delete(m.Targets, deleteIndex, deleteIndex+1)
 			m.SaveError = config.SaveConfig(config.Config{Targets: m.Targets})
+
+			if m.SaveError != nil {
+				m.StatusMessage = "Error deleting connection"
+				m.StatusMessageType = StatusError
+			} else {
+				m.StatusMessage = "Connection deleted successfully"
+				m.StatusMessageType = StatusSuccess
+			}
 
 			if len(m.Targets) == 0 {
 				m.Cursor = 0
@@ -312,27 +385,24 @@ func (m Model) handleConfirmDeleteState(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.State = StateListTargets
-	case "n", "esc":
+		confirmationModeActive = false
+		return m, hideStatusMessageAfterDelay
+
+	case key.Matches(msg, m.Keys.Deny):
 		m.State = StateListTargets
+		confirmationModeActive = false
+		return m, nil
 	}
+
 	return m, nil
 }
 
-func (m Model) handleInputFieldUpdate(msg tea.Msg) tea.Cmd {
+// updateCurrentInput updates the current input field
+func (m Model) updateCurrentInput(msg tea.Msg) tea.Cmd {
 	if m.CreateFocus >= 0 && m.CreateFocus < len(m.CreateInputs) {
-		isNavKey := false
-		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			key := keyMsg.String()
-			if key == "tab" || key == "shift+tab" || key == "enter" || key == "up" || key == "down" || key == "esc" {
-				isNavKey = true
-			}
-		}
-		if !isNavKey {
-			var inputCmd tea.Cmd
-			m.CreateInputs[m.CreateFocus], inputCmd = m.CreateInputs[m.CreateFocus].Update(msg)
-			return inputCmd
-		}
-		return m.CreateInputs[m.CreateFocus].Focus()
+		var cmd tea.Cmd
+		m.CreateInputs[m.CreateFocus], cmd = m.CreateInputs[m.CreateFocus].Update(msg)
+		return cmd
 	}
 	return nil
 }

@@ -26,3 +26,19 @@ const (
 	// NumInputs represents the total number of input fields.
 	NumInputs
 )
+
+// StateNames provides human-readable names for states
+var StateNames = map[ViewState]string{
+	StateListTargets:   "List View",
+	StateCreateTarget:  "Create View",
+	StateEditTarget:    "Edit View",
+	StateConfirmDelete: "Confirm Delete",
+}
+
+// GetStateName returns a human-readable name for the current state
+func (s ViewState) String() string {
+	if name, ok := StateNames[s]; ok {
+		return name
+	}
+	return "Unknown State"
+}
