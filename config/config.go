@@ -43,19 +43,67 @@ func (t SSHTarget) GetSSHCommand() []string {
 	return args
 }
 
+// ThemeColors holds color scheme settings for the application's UI.
+type ThemeColors struct {
+	// Primary colors
+	PrimaryColor   string `yaml:"primary_color,omitempty"`
+	SecondaryColor string `yaml:"secondary_color,omitempty"`
+	HighlightColor string `yaml:"highlight_color,omitempty"`
+	TextColor      string `yaml:"text_color,omitempty"`
+	
+	// Status colors
+	ErrorColor     string `yaml:"error_color,omitempty"`
+	SuccessColor   string `yaml:"success_color,omitempty"`
+	WarningColor   string `yaml:"warning_color,omitempty"`
+	InfoColor      string `yaml:"info_color,omitempty"`
+}
+
+// DefaultTheme returns the application's default color theme.
+func DefaultTheme() ThemeColors {
+	return ThemeColors{
+		PrimaryColor:   "#5E81AC", // Nord Frost dark blue
+		SecondaryColor: "#81A1C1", // Nord Frost lighter blue
+		HighlightColor: "#88C0D0", // Nord Frost light blue
+		TextColor:      "#ECEFF4", // Nord Snow Storm white
+		ErrorColor:     "#BF616A", // Nord Aurora red
+		SuccessColor:   "#A3BE8C", // Nord Aurora green
+		WarningColor:   "#EBCB8B", // Nord Aurora yellow
+		InfoColor:      "#B48EAD", // Nord Aurora purple
+	}
+}
+
 // Config represents the application's configuration structure.
 type Config struct {
 	// Targets is a list of configured SSH targets.
 	Targets []SSHTarget `yaml:"targets"`
+	// Theme contains the UI color scheme configuration.
+	Theme ThemeColors `yaml:"theme,omitempty"`
 }
 
-// GetConfigPath returns the full path to the configuration file.
-func GetConfigPath() (string, error) {
+// Variable to allow tests to override the config path
+var configPathProvider = defaultConfigPath
+
+// defaultConfigPath is the default implementation for getting config path
+func defaultConfigPath() (string, error) {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get user config directory: %w", err)
 	}
 	return filepath.Join(configDir, "akumi", "config.yaml"), nil
+}
+
+// GetConfigPath returns the full path to the configuration file.
+func GetConfigPath() (string, error) {
+	return configPathProvider()
+}
+
+// SetConfigPathProvider allows tests to override the config path provider
+func SetConfigPathProvider(provider func() (string, error)) func() {
+	oldProvider := configPathProvider
+	configPathProvider = provider
+	return func() {
+		configPathProvider = oldProvider
+	}
 }
 
 // LoadConfig reads and parses the configuration file from disk.
@@ -75,7 +123,11 @@ func LoadConfig() (Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Config{Targets: []SSHTarget{}}, nil
+			// Return a default config with empty targets and default theme
+			return Config{
+				Targets: []SSHTarget{},
+				Theme:   DefaultTheme(),
+			}, nil
 		}
 		return Config{}, fmt.Errorf("failed to read config file %s: %w", configPath, err)
 	}
@@ -86,10 +138,39 @@ func LoadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("failed to parse config file %s: %w", configPath, err)
 	}
 
+	// Apply defaults
 	for i := range cfg.Targets {
 		if cfg.Targets[i].Port == 0 {
 			cfg.Targets[i].Port = 22
 		}
+	}
+	
+	// Apply default theme colors for any unset values
+	defaultTheme := DefaultTheme()
+	
+	if cfg.Theme.PrimaryColor == "" {
+		cfg.Theme.PrimaryColor = defaultTheme.PrimaryColor
+	}
+	if cfg.Theme.SecondaryColor == "" {
+		cfg.Theme.SecondaryColor = defaultTheme.SecondaryColor
+	}
+	if cfg.Theme.HighlightColor == "" {
+		cfg.Theme.HighlightColor = defaultTheme.HighlightColor
+	}
+	if cfg.Theme.TextColor == "" {
+		cfg.Theme.TextColor = defaultTheme.TextColor
+	}
+	if cfg.Theme.ErrorColor == "" {
+		cfg.Theme.ErrorColor = defaultTheme.ErrorColor
+	}
+	if cfg.Theme.SuccessColor == "" {
+		cfg.Theme.SuccessColor = defaultTheme.SuccessColor
+	}
+	if cfg.Theme.WarningColor == "" {
+		cfg.Theme.WarningColor = defaultTheme.WarningColor
+	}
+	if cfg.Theme.InfoColor == "" {
+		cfg.Theme.InfoColor = defaultTheme.InfoColor
 	}
 
 	return cfg, nil
@@ -111,7 +192,10 @@ func SaveConfig(cfg Config) error {
 			saveTargets[i].Port = 0 // Use 0 for omitempty default
 		}
 	}
-	saveCfg := Config{Targets: saveTargets}
+	saveCfg := Config{
+		Targets: saveTargets,
+		Theme:   cfg.Theme,
+	}
 
 	data, err := yaml.Marshal(saveCfg)
 	if err != nil {

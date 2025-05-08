@@ -190,6 +190,9 @@ func InitialModel() Model {
 	if err != nil {
 		return Model{Err: err}
 	}
+	
+	// Initialize styles with theme from config
+	styles.Initialize(cfg.Theme)
 
 	inputs := make([]textinput.Model, NumInputs)
 	placeholders := []string{"Username", "Host", "Port (default 22)", "Nickname (optional)"}
